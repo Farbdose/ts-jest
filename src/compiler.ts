@@ -32,7 +32,7 @@
 import { LogContexts, LogLevels, Logger } from 'bs-logger'
 import bufferFrom from 'buffer-from'
 import stableStringify = require('fast-json-stable-stringify')
-import { readFileSync, writeFileSync } from 'fs'
+import { readFileSync, statSync, writeFileSync } from 'fs'
 import mkdirp = require('mkdirp')
 import { basename, extname, join, relative } from 'path'
 
@@ -121,6 +121,33 @@ export function createCompiler(configs: ConfigSet): TsCompiler {
       }
     }
 
+    const fileSystemEntryCache: {
+      [key: string]: number
+    } = {}
+    const fileSystemEntryExists = (path: string, entryKind: number) => {
+      const cache = fileSystemEntryCache[path]
+      if (cache) {
+        return cache === entryKind
+      }
+
+      try {
+        const stat = statSync(path)
+        if (stat.isFile()) {
+          fileSystemEntryCache[path] = 0
+          return 0 === entryKind
+        } else if (stat.isDirectory()) {
+          fileSystemEntryCache[path] = 1
+          return 1 === entryKind
+        } else {
+          fileSystemEntryCache[path] = -1
+          return false
+        }
+      } catch (e) {
+        fileSystemEntryCache[path] = -1
+        return false
+      }
+    }
+
     // Create the compiler host for type checking.
     const serviceHostDebugCtx = {
       [LogContexts.logLevel]: LogLevels.debug,
@@ -157,11 +184,11 @@ export function createCompiler(configs: ConfigSet): TsCompiler {
         }
         return ts.ScriptSnapshot.fromString(contents)
       },
-      fileExists: ts.sys.fileExists,
+      fileExists: (path: string) => fileSystemEntryExists(path, 0),
       readFile: logger.wrap(serviceHostTraceCtx, 'readFile', ts.sys.readFile),
       readDirectory: ts.sys.readDirectory,
       getDirectories: ts.sys.getDirectories,
-      directoryExists: ts.sys.directoryExists,
+      directoryExists: (path: string) => fileSystemEntryExists(path, 1),
       getNewLine: () => '\n',
       getCurrentDirectory: () => cwd,
       getCompilationSettings: () => compilerOptions,
